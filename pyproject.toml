@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "finalproject-romanchuk-roman-m25-555"
+version = "1.0.0"
+description = "Платформа для отслеживания и симуляции торговли валютами"
+authors = ["RomanchukRoman <r.romanchuk@ya.ru>"]
+readme = "README.md"
+license = "MIT"
+
+packages = [
+    { include = "valutatrade_hub", from = "." }
+]
+
+[tool.poetry.dependencies]
+python = ">=3.11"
+
+[tool.poetry.scripts]
+project = "main:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
