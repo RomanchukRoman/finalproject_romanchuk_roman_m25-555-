@@ -4,7 +4,7 @@
 
 ## Демо
 
-[![ValutaTrade Hub Demo](https://asciinema.org/a/LPCGdXajDALrcjWn1TE462tXS.png)](https://asciinema.org/a/LPCGdXajDALrcjWn1TE462tXS)
+[![asciicast](https://asciinema.org/a/LPCGdXajDALrcjWn1TE462tXS.svg)](https://asciinema.org/a/LPCGdXajDALrcjWn1TE462tXS)
 
 ## Установка и запуск
 
