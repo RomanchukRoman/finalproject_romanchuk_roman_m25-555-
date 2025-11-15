@@ -6,7 +6,8 @@ from typing import Optional, List, Dict, Any
 
 # Импорты из нашей системы
 from ..core.models import User, Wallet, Portfolio
-from ..core.exceptions import InsufficientFundsError
+from ..core.exceptions import InsufficientFundsError, ApiRequestError
+from ..core.currencies import get_currency, get_all_currencies, CurrencyNotFoundError
 
 
 class CLIState:
@@ -33,6 +34,7 @@ def save_users(data_dir: Path, users: list) -> None:
     with open(users_file, 'w', encoding='utf-8') as f:
         json.dump(users, f, ensure_ascii=False, indent=2)
 
+
 def load_portfolios(data_dir: Path) -> list:
     """Загрузка портфелей из JSON."""
     portfolios_file = data_dir / "portfolios.json"
@@ -40,8 +42,8 @@ def load_portfolios(data_dir: Path) -> list:
         with open(portfolios_file, 'r', encoding='utf-8') as f:
             return json.load(f)
     return []
-        
-        
+
+
 def save_portfolios(data_dir: Path, portfolios: list) -> None:
     """Сохранение портфелей в JSON."""
     portfolios_file = data_dir / "portfolios.json"
@@ -52,10 +54,15 @@ def save_portfolios(data_dir: Path, portfolios: list) -> None:
 def load_rates(data_dir: Path) -> dict:
     """Загрузка курсов из JSON."""
     rates_file = data_dir / "rates.json"
+    
     if rates_file.exists():
-        with open(rates_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+        try:
+            with open(rates_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            raise ApiRequestError(f"Ошибка загрузки курсов: {e}")
+    else:
+        raise ApiRequestError("Файл с курсами не найден")
 
 
 def get_next_user_id(users: list) -> int:
@@ -218,7 +225,16 @@ def show_portfolio_command(args: Dict[str, Any], state: CLIState):
         portfolio = Portfolio.from_dict(portfolio_data)
         
         # Загрузка курсов
-        rates = load_rates(state.data_dir)
+        try:
+            rates = load_rates(state.data_dir)
+        except ApiRequestError as e:
+            print(f"Внимание: {e}")
+            print("Используются базовые курсы для расчета")
+            rates = {
+                'EUR_USD': {'rate': 1.08},
+                'BTC_USD': {'rate': 50000.0},
+                'ETH_USD': {'rate': 3000.0}
+            }
         
         # Получение информации о портфеле
         if not portfolio.wallets:
@@ -269,6 +285,9 @@ def buy_command(args: Dict[str, Any], state: CLIState):
         if not currency or not amount_str:
             print("Ошибка: необходимо указать --currency и --amount")
             return
+        
+        # Валидация валюты через новую систему
+        currency_obj = get_currency(currency)
         
         try:
             amount = float(amount_str)
@@ -335,6 +354,10 @@ def buy_command(args: Dict[str, Any], state: CLIState):
         print(f"Изменения в портфеле:")
         print(f"- {currency}: было {old_balance:.4f} → стало {wallet.balance:.4f}")
         
+    except CurrencyNotFoundError as e:
+        print(str(e))
+        print("Проверьте правильность кода валюты")
+        
     except ValueError as e:
         print(f"Ошибка валидации: {e}")
     except Exception as e:
@@ -350,6 +373,9 @@ def sell_command(args: Dict[str, Any], state: CLIState):
         if not currency or not amount_str:
             print("Ошибка: необходимо указать --currency и --amount")
             return
+        
+        # Валидация валюты через новую систему
+        currency_obj = get_currency(currency)
         
         try:
             amount = float(amount_str)
@@ -424,6 +450,10 @@ def sell_command(args: Dict[str, Any], state: CLIState):
         print(f"Изменения в портфеле:")
         print(f"- {currency}: было {old_balance:.4f} → стало {wallet.balance:.4f}")
         
+    except CurrencyNotFoundError as e:
+        print(str(e))
+        print("Проверьте правильность кода валюты")
+        
     except ValueError as e:
         print(f"Ошибка валидации: {e}")
     except Exception as e:
@@ -439,6 +469,10 @@ def get_rate_command(args: Dict[str, Any], state: CLIState):
         if not from_currency or not to_currency:
             print("Ошибка: необходимо указать --from и --to")
             return
+        
+        # Валидация кодов валют через новую систему
+        from_currency_obj = get_currency(from_currency)
+        to_currency_obj = get_currency(to_currency)
         
         # Валидация кодов валют
         from_currency = from_currency.upper().strip()
@@ -466,6 +500,19 @@ def get_rate_command(args: Dict[str, Any], state: CLIState):
                 print(f"Обратный курс {to_currency}→{from_currency}: {reverse_rate:.6f}")
             return
         
+        # Поиск обратного курса
+        reverse_rate_key = f"{to_currency}_{from_currency}"
+        if reverse_rate_key in rates and reverse_rate_key not in ['source', 'last_refresh']:
+            rate_data = rates[reverse_rate_key]
+            reverse_rate = rate_data['rate']
+            if reverse_rate != 0:
+                rate = 1 / reverse_rate
+                updated_at = rate_data['updated_at']
+                
+                print(f"Курс {from_currency}→{to_currency}: {rate:.6f} (расчетный, обновлено: {updated_at})")
+                print(f"Обратный курс {to_currency}→{from_currency}: {reverse_rate:.6f}")
+            return
+        
         # Поиск через USD если прямого курса нет
         if from_currency != 'USD' and to_currency != 'USD':
             usd_to_target_key = f"USD_{to_currency}"
@@ -475,7 +522,7 @@ def get_rate_command(args: Dict[str, Any], state: CLIState):
                 usd_to_target = rates[usd_to_target_key]['rate']
                 source_to_usd = rates[source_to_usd_key]['rate']
                 
-                if usd_to_target != 0:
+                if usd_to_target != 0 and source_to_usd != 0:
                     calculated_rate = source_to_usd * usd_to_target
                     print(f"Курс {from_currency}→{to_currency}: {calculated_rate:.6f} (расчетный)")
                     
@@ -485,9 +532,17 @@ def get_rate_command(args: Dict[str, Any], state: CLIState):
                     return
         
         print(f"Курс {from_currency}→{to_currency} недоступен. Повторите попытку позже.")
+        print(f"Доступные курсы: {[k for k in rates.keys() if k not in ['source', 'last_refresh']]}")
+        
+    except CurrencyNotFoundError as e:
+        print(str(e))
+        print("Используйте 'help get-rate' или проверьте список доступных валют")
+        available_currencies = list(get_all_currencies().keys())
+        print(f"Доступные валюты: {', '.join(available_currencies)}")
         
     except Exception as e:
         print(f"Ошибка при получении курса: {e}")
+
 
 def interactive_mode():
     """Интерактивный режим с циклом while."""
